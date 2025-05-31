@@ -32,12 +32,12 @@
       </div>
       <div class="calendar-controls">
         <span class="year">二〇二四年四月</span>
-        <span class="range">9  16-18jo / 5 字-14po</span>
+        <span class="range">9 16-18jo / 5 字-14po</span>
         <span class="font">字体 14-16po</span>
         <button class="export-btn small">导出日程表</button>
       </div>
       <div class="calendar">
-        <div class="calendar-header">
+        <!-- <div class="calendar-header">
           <div v-for="(day, idx) in weekDays" :key="idx" class="calendar-cell header">{{ day }}</div>
         </div>
         <div class="calendar-body">
@@ -50,58 +50,94 @@
             <span>{{ cell.day }}</span>
             <span v-if="cell.label" class="cell-label">{{ cell.label }}</span>
           </div>
-        </div>
+        </div> -->
+        <FullCalendar class="demo-app-calendar" :options="calendarOptions">
+          <template v-slot:eventContent="arg">
+            <b>{{ arg.timeText }}</b>
+            <i>{{ arg.event.title }}</i>
+          </template>
+        </FullCalendar>
       </div>
     </main>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { defineComponent, ref } from "vue";
+import FullCalendar from "@fullcalendar/vue3";
+import dayGridPlugin from "@fullcalendar/daygrid";
+import timeGridPlugin from "@fullcalendar/timegrid";
+import interactionPlugin from "@fullcalendar/interaction";
+const input1 = ref("");
+const input2 = ref("");
+const userAvatar = ref("https://randomuser.me/api/portraits/men/32.jpg"); // mock头像
 
-const input1 = ref('');
-const input2 = ref('');
-const userAvatar = ref('https://randomuser.me/api/portraits/men/32.jpg'); // mock头像
-const weekDays = [
-  '星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'
-];
-const calendarData = [
-  { day: 1, color: 'blue', label: '' },
-  { day: 2, color: '', label: '' },
-  { day: 3, color: 'green', label: '' },
-  { day: 4, color: '', label: '' },
-  { day: 5, color: '', label: '' },
-  { day: 6, color: '', label: '' },
-  { day: 7, color: '', label: '' },
-  { day: 8, color: '', label: '' },
-  { day: 9, color: '', label: '' },
-  { day: 10, color: 'green', label: '' },
-  { day: 11, color: '', label: '' },
-  { day: 12, color: 'green', label: '' },
-  { day: 13, color: 'green', label: '' },
-  { day: 14, color: 'blue', label: '' },
-  { day: 15, color: 'green', label: '' },
-  { day: 16, color: '', label: '' },
-  { day: 17, color: 'orange', label: '' },
-  { day: 18, color: '', label: '' },
-  { day: 19, color: 'red', label: '' },
-  { day: 20, color: '', label: '' },
-  { day: 21, color: '', label: '' },
-  { day: 22, color: '', label: '' },
-  { day: 23, color: 'red', label: '' },
-  { day: 24, color: 'orange', label: '' },
-  { day: 25, color: 'green', label: '' },
-  { day: 26, color: '', label: '' },
-  { day: 27, color: 'gray', label: '' },
-  { day: 28, color: 'orange', label: '' },
-  { day: 29, color: 'green', label: '' },
-  { day: 30, color: '', label: '' },
-  { day: 31, color: 'gray', label: '' },
-];
-
+const calendarOptions = {
+  plugins: [
+    dayGridPlugin,
+    timeGridPlugin,
+    interactionPlugin, // needed for dateClick
+  ],
+  headerToolbar: {
+    left: "prev,next today",
+    center: "title",
+    right: "dayGridMonth,timeGridWeek,timeGridDay",
+  },
+  initialView: "dayGridMonth",
+  initialEvents: [], // alternatively, use the `events` setting to fetch from a feed
+  editable: true,
+  selectable: true,
+  selectMirror: true,
+  dayMaxEvents: true,
+  weekends: true,
+  select: handleDateSelect,
+  eventClick: handleEventClick,
+  eventsSet: handleEvents,
+  /* you can update a remote database when these fire:
+        eventAdd:
+        eventChange:
+        eventRemove:
+        */
+};
+defineComponent({
+  components: {
+    FullCalendar,
+  },
+});
 function handleAI() {
   // 这里可以集成AI对话逻辑
-  alert('AI 安排日程功能待接入');
+  alert("AI 安排日程功能待接入");
+}
+function handleWeekendsToggle() {
+  this.calendarOptions.weekends = !this.calendarOptions.weekends; // update a property
+}
+function handleDateSelect(selectInfo) {
+  let title = prompt("Please enter a new title for your event");
+  let calendarApi = selectInfo.view.calendar;
+
+  calendarApi.unselect(); // clear date selection
+
+  if (title) {
+    calendarApi.addEvent({
+      id: 1,
+      title,
+      start: selectInfo.startStr,
+      end: selectInfo.endStr,
+      allDay: selectInfo.allDay,
+    });
+  }
+}
+function handleEventClick(clickInfo) {
+  if (
+    confirm(
+      `Are you sure you want to delete the event '${clickInfo.event.title}'`
+    )
+  ) {
+    clickInfo.event.remove();
+  }
+}
+function handleEvents(events) {
+  this.currentEvents = events;
 }
 </script>
 
