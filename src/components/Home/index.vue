@@ -7,6 +7,9 @@
         :chat-messages="chatMessages"
         v-model="chatInput"
         @send="sendChat"
+        @scheduleAccept="handleScheduleAccept"
+        @scheduleReject="handleScheduleReject"
+        @addVideoToSchedule="handleAddVideoToSchedule"
       />
     </aside>
 
@@ -15,18 +18,19 @@
       <div class="header">
         <div class="main-title">日程 管理软件</div>
         <div class="header-actions">
-          <button class="export-btn">导出日程表</button>
+          <button class="export-btn">导入视频列表</button>
           <img class="avatar" :src="userAvatar" alt="avatar" />
         </div>
       </div>
       <div class="calendar-controls">
-        <span class="year">二〇二四年四月</span>
-        <span class="range">9 16-18jo / 5 字-14po</span>
-        <span class="font">字体 14-16po</span>
         <button class="export-btn small">导出日程表</button>
       </div>
       <div class="calendar">
-        <FullCalendar class="demo-app-calendar" :options="calendarOptions">
+        <FullCalendar
+          ref="calendarRef"
+          class="demo-app-calendar"
+          :options="calendarOptions"
+        >
           <template v-slot:eventContent="arg">
             <b>{{ arg.timeText }}</b>
             <i>{{ arg.event.title }}</i>
@@ -34,17 +38,30 @@
         </FullCalendar>
       </div>
     </main>
+
+    <CommonDialog
+      v-model="showDialog"
+      :type="dialogType"
+      :eventTitle="eventToDelete?.title"
+      :selectedDateInfo="selectedDateInfo"
+      :title="dialogType === 'add' ? '添加新日程' : '删除日程'"
+      :confirmText="dialogType === 'add' ? '确认' : '确认删除'"
+      @confirm="handleDialogConfirm"
+    />
   </div>
 </template>
 
 <script setup>
-import { defineComponent, ref } from "vue";
+import { defineComponent, ref, onMounted } from "vue";
 import FullCalendar from "@fullcalendar/vue3";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 // import InputSection from "./inputSection.vue";
 import ChatArea from "./ChatArea.vue";
+import CommonDialog from "./CommonDialog.vue";
+import aiService from "../../api/ai.js";
+import { AI_CONFIG } from "../../config/ai-config.js";
 // const input1 = ref("");
 const userAvatar = ref("https://randomuser.me/api/portraits/men/32.jpg"); // mock头像
 
@@ -60,18 +77,7 @@ const calendarOptions = {
     right: "dayGridMonth,timeGridWeek,timeGridDay",
   },
   initialView: "dayGridMonth",
-  initialEvents: [
-    {
-      id: 1,
-      title: "All-day event",
-      start: new Date().toISOString().replace(/T.*$/, ""),
-    },
-    {
-      id: 2,
-      title: "Timed event",
-      start: new Date().toISOString().replace(/T.*$/, "") + "T12:00:00",
-    },
-  ], // alternatively, use the `events` setting to fetch from a feed
+  initialEvents: [], // 启动时不插入测试事件，由本地持久化数据加载
   editable: true,
   selectable: true,
   selectMirror: true,
@@ -80,44 +86,102 @@ const calendarOptions = {
   select: handleDateSelect,
   eventClick: handleEventClick,
   eventsSet: handleEvents,
+  eventChange: handleEventChange, // 新增：拖拽/编辑日程后持久化
   /* you can update a remote database when these fire:
         eventAdd:
         eventChange:
         eventRemove:
         */
 };
+
+// 添加日历实例引用
+const calendarRef = ref(null);
 defineComponent({
   components: {
     FullCalendar,
   },
 });
+
+const showDialog = ref(false);
+const dialogType = ref("add");
+const selectedDateInfo = ref(null);
+const eventToDelete = ref(null);
+
 function handleDateSelect(selectInfo) {
-  let title = prompt("Please enter a new title for your event");
-  let calendarApi = selectInfo.view.calendar;
-
-  calendarApi.unselect(); // clear date selection
-
-  if (title) {
-    calendarApi.addEvent({
-      id: 1,
-      title,
-      start: selectInfo.startStr,
-      end: selectInfo.endStr,
-      allDay: selectInfo.allDay,
-    });
-  }
+  selectedDateInfo.value = selectInfo;
+  dialogType.value = "add";
+  showDialog.value = true;
 }
+
 function handleEventClick(clickInfo) {
-  if (
-    confirm(
-      `Are you sure you want to delete the event '${clickInfo.event.title}'`
-    )
-  ) {
-    clickInfo.event.remove();
-  }
+  eventToDelete.value = clickInfo.event;
+  dialogType.value = "delete";
+  showDialog.value = true;
 }
+
+// 启动时加载本地 schedule 数据
+onMounted(async () => {
+  if (!window.electronAPI) return;
+  const { success, data } = await window.electronAPI.loadSchedule();
+  if (success && Array.isArray(data) && data.length > 0) {
+    calendarOptions.initialEvents = data;
+    if (calendarRef.value) {
+      const calendarApi =
+        calendarRef.value.getApi?.() || calendarRef.value.calendarApi;
+      if (calendarApi) {
+        data.forEach((event) => calendarApi.addEvent(event));
+      }
+    }
+  }
+});
+
+// 保存日程到本地
+function saveSchedule() {
+  if (!window.electronAPI) return;
+  let events = [];
+  if (calendarRef.value) {
+    const calendarApi =
+      calendarRef.value.getApi?.() || calendarRef.value.calendarApi;
+    if (calendarApi) {
+      events = calendarApi.getEvents().map((e) => ({
+        id: e.id,
+        title: e.title,
+        start: e.start,
+        end: e.end,
+        allDay: e.allDay,
+        description: e.extendedProps?.description,
+        extendedProps: e.extendedProps,
+      }));
+    }
+  }
+  window.electronAPI.saveSchedule(events);
+}
+
+// 在日程变动后保存
+function handleDialogConfirm(value) {
+  if (dialogType.value === "add" && selectedDateInfo.value) {
+    let calendarApi = selectedDateInfo.value.view.calendar;
+    calendarApi.unselect();
+    calendarApi.addEvent({
+      id: Date.now(),
+      title: value,
+      start: selectedDateInfo.value.startStr,
+      end: selectedDateInfo.value.endStr,
+      allDay: selectedDateInfo.value.allDay,
+    });
+  } else if (dialogType.value === "delete" && eventToDelete.value) {
+    eventToDelete.value.remove();
+    eventToDelete.value = null;
+  }
+  saveSchedule();
+}
+
 function handleEvents(events) {
   this.currentEvents = events;
+}
+
+function handleEventChange() {
+  saveSchedule();
 }
 
 const chatMessages = ref([
@@ -125,18 +189,241 @@ const chatMessages = ref([
   // { role: 'ai', content: '你好，我是AI，有什么可以帮您？' }
 ]);
 const chatInput = ref("");
-function sendChat() {
+const isAILoading = ref(false);
+
+async function sendChat() {
   const content = chatInput.value.trim();
   if (!content) return;
+
+  // 添加用户消息
   chatMessages.value.push({ role: "user", content });
   chatInput.value = "";
-  // mock AI回复
-  setTimeout(() => {
+
+  // 显示AI正在思考
+  isAILoading.value = true;
+  chatMessages.value.push({
+    role: "ai",
+    content: "🤔 正在思考中...",
+    isLoading: true,
+  });
+
+  try {
+    // 移除加载状态的消息
+    chatMessages.value.pop();
+
+    // 创建AI回复消息
+    const aiMessageIndex = chatMessages.value.length;
     chatMessages.value.push({
       role: "ai",
-      content: "你好，我是AI，有什么可以帮您？",
+      content: "",
+      isStreaming: true,
     });
-  }, 600);
+
+    // 根据配置决定是否使用流式输出
+    let response;
+    if (AI_CONFIG.ENABLE_STREAMING) {
+      // 调用AI服务（流式）
+      response = await aiService.sendMessageStream(
+        content,
+        (chunk, fullResponse) => {
+          // 更新AI回复内容
+          chatMessages.value[aiMessageIndex].content = fullResponse;
+        }
+      );
+    } else {
+      // 调用AI服务（非流式）
+      response = await aiService.sendMessage(content);
+      // 直接设置完整内容
+      chatMessages.value[aiMessageIndex].content = response.content;
+    }
+
+    if (response.success) {
+      // 完成流式输出，移除流式标记
+      chatMessages.value[aiMessageIndex].isStreaming = false;
+      chatMessages.value[aiMessageIndex].usage = response.usage;
+
+      // 如果是日程规划，设置相应的类型和数据
+      if (response.type === "schedule") {
+        chatMessages.value[aiMessageIndex].type = "schedule";
+        chatMessages.value[aiMessageIndex].schedules = response.schedules;
+      }
+    } else {
+      // 添加错误消息
+      chatMessages.value[aiMessageIndex] = {
+        role: "ai",
+        content: response.content,
+        isError: true,
+      };
+    }
+  } catch (error) {
+    console.error("AI调用错误:", error);
+    // 移除加载状态的消息
+    chatMessages.value.pop();
+
+    // 添加错误消息
+    chatMessages.value.push({
+      role: "ai",
+      content: "抱歉，发生了错误，请稍后重试。",
+      isError: true,
+    });
+  } finally {
+    isAILoading.value = false;
+  }
+}
+
+// 处理日程接受
+function handleScheduleAccept(schedules) {
+  console.log("收到日程接受请求:", schedules);
+
+  // 获取日历实例 - 尝试多种方式
+  let calendarApi = null;
+
+  if (calendarRef.value) {
+    // 尝试不同的API获取方式
+    calendarApi =
+      calendarRef.value.getApi?.() ||
+      calendarRef.value.calendarApi ||
+      calendarRef.value.$el?.getApi?.();
+  }
+
+  if (!calendarApi) {
+    console.error("日历实例不可用");
+    console.log("calendarRef.value:", calendarRef.value);
+    // 添加错误消息
+    chatMessages.value.push({
+      role: "ai",
+      content: "❌ 抱歉，日历组件未准备好，无法添加日程。",
+      type: "text",
+    });
+    return;
+  }
+
+  console.log("日历API可用:", calendarApi);
+
+  // 将日程添加到日历
+  schedules.forEach((schedule) => {
+    try {
+      // 解析时间
+      const [startTime, endTime] = schedule.time.split("-");
+
+      // 根据day信息计算日期
+      let targetDate = new Date();
+      if (schedule.day) {
+        // 解析天数，例如"第1天"、"第2天"等
+        const dayMatch = schedule.day.match(/第(\d+)天/);
+        if (dayMatch) {
+          const dayOffset = parseInt(dayMatch[1]) - 1; // 第1天就是今天
+          targetDate.setDate(targetDate.getDate() + dayOffset);
+        }
+      }
+
+      const startDate = new Date(targetDate);
+      const endDate = new Date(targetDate);
+
+      // 设置开始时间
+      const [startHour, startMinute] = startTime.split(":").map(Number);
+      startDate.setHours(startHour, startMinute, 0, 0);
+
+      // 设置结束时间
+      const [endHour, endMinute] = endTime.split(":").map(Number);
+      endDate.setHours(endHour, endMinute, 0, 0);
+
+      const newEvent = {
+        id: Date.now() + Math.random(),
+        title: schedule.title,
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        description: schedule.description,
+        // 添加额外信息到事件扩展属性
+        extendedProps: {
+          day: schedule.day,
+          priority: schedule.priority,
+          tool: schedule.tool,
+          memory_tip: schedule.memory_tip,
+        },
+      };
+
+      console.log("准备添加事件:", newEvent);
+
+      // 添加到日历
+      try {
+        calendarApi.addEvent(newEvent);
+        console.log("成功添加日程:", newEvent);
+      } catch (addError) {
+        console.error("addEvent方法失败:", addError);
+
+        // 备用方法：直接添加到事件列表
+        try {
+          if (calendarOptions.initialEvents) {
+            calendarOptions.initialEvents.push(newEvent);
+            console.log("通过备用方法添加日程:", newEvent);
+          }
+        } catch (backupError) {
+          console.error("备用方法也失败:", backupError);
+        }
+      }
+    } catch (error) {
+      console.error("添加日程失败:", error);
+    }
+  });
+
+  // 添加确认消息
+  chatMessages.value.push({
+    role: "ai",
+    content: "✅ 日程已成功添加到您的日历中！",
+    type: "text",
+  });
+  saveSchedule();
+}
+
+// 处理日程拒绝
+function handleScheduleReject() {
+  // 添加拒绝消息
+  chatMessages.value.push({
+    role: "ai",
+    content: "好的，我重新为您规划日程。请告诉我您的具体需求。",
+    type: "text",
+  });
+}
+
+function handleAddVideoToSchedule(pages) {
+  let calendarApi = null;
+  if (calendarRef.value) {
+    calendarApi =
+      calendarRef.value.getApi?.() ||
+      calendarRef.value.calendarApi ||
+      calendarRef.value.$el?.getApi?.();
+  }
+  if (!calendarApi) {
+    chatMessages.value.push({
+      role: "ai",
+      content: "❌ 日历组件未准备好，无法添加视频日程。",
+      type: "text",
+    });
+    return;
+  }
+  // 支持批量添加
+  let now = new Date();
+  if (!Array.isArray(pages)) pages = [pages];
+  pages.forEach((page) => {
+    const start = new Date(now);
+    const end = new Date(start.getTime() + page.duration * 1000);
+    calendarApi.addEvent({
+      id: Date.now() + Math.random(),
+      title: page.title,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      description: "B站视频",
+      extendedProps: { bvid: page.bvid, cid: page.cid },
+    });
+    now = end; // 下一个分P顺延
+    chatMessages.value.push({
+      role: "ai",
+      content: `✅ 已将【${page.title}】加入日程表！`,
+      type: "text",
+    });
+  });
+  saveSchedule();
 }
 </script>
 
@@ -147,7 +434,8 @@ function sendChat() {
   background: #f7f8fa;
 }
 .sidebar {
-  width: 320px;
+  width: 20vw;
+  min-width: 320px;
   background: #ffffff;
   color: #222;
   display: flex;
@@ -232,7 +520,7 @@ function sendChat() {
   border-radius: 18px;
   box-shadow: 0 2px 12px #0001;
   padding: 32px 24px;
-  height: calc(100vh - 200px); /* 调整高度以适应容器 */
+  height: calc(100vh - 120px); /* 更高，底部更贴近页面底部 */
   overflow: hidden; /* 防止内容溢出 */
 }
 .calendar-header {
