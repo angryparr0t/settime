@@ -191,6 +191,32 @@ const chatMessages = ref([
 const chatInput = ref("");
 const isAILoading = ref(false);
 
+// 在流式过程中屏蔽/占位 JSON 片段，避免渲染到聊天区（保留普通文本）
+function maskStreamingContent(text) {
+  if (!text) return { maskedText: "" };
+  let result = text;
+
+  // 0) 隐藏 <Schedule> 标签中的内容，保留标签外的文本
+  result = result.replace(
+    /<Schedule>[\s\S]*?<\/Schedule>/gi,
+    "\n[正在生成日程…]\n"
+  );
+
+  // 1) 流式未结束：出现 <Schedule> 起始但尚无结束标签，仅隐藏其后的内容为占位，保留其前的文本
+  const openOnlyIdx = result.search(/<Schedule>/i);
+  const hasClose = /<\/Schedule>/i.test(result);
+  if (openOnlyIdx !== -1 && !hasClose) {
+    result = result.slice(0, openOnlyIdx) + "\n[正在生成日程…]\n";
+  }
+
+  // 2) 可选：屏蔽 ```json 代码块（若模型仍偶发用代码块包裹 JSON）
+  result = result.replace(/```json[\s\S]*?```/gi, "\n[正在生成日程…]\n");
+
+  // 3) 不再进行“启发式大括号屏蔽”，避免误伤正常文本
+
+  return { maskedText: result };
+}
+
 async function sendChat() {
   const content = chatInput.value.trim();
   if (!content) return;
@@ -226,15 +252,18 @@ async function sendChat() {
       response = await aiService.sendMessageStream(
         content,
         (chunk, fullResponse) => {
-          // 更新AI回复内容
-          chatMessages.value[aiMessageIndex].content = fullResponse;
+          // 更新AI回复内容（对流式中的 JSON 做遮挡处理）
+          const { maskedText } = maskStreamingContent(fullResponse);
+          chatMessages.value[aiMessageIndex].content = maskedText;
         }
       );
     } else {
       // 调用AI服务（非流式）
       response = await aiService.sendMessage(content);
-      // 直接设置完整内容
-      chatMessages.value[aiMessageIndex].content = response.content;
+      // 直接设置完整内容（屏蔽潜在 JSON）
+      chatMessages.value[aiMessageIndex].content = maskStreamingContent(
+        response.content
+      ).maskedText;
     }
 
     if (response.success) {
@@ -242,10 +271,11 @@ async function sendChat() {
       chatMessages.value[aiMessageIndex].isStreaming = false;
       chatMessages.value[aiMessageIndex].usage = response.usage;
 
-      // 如果是日程规划，设置相应的类型和数据
+      // 如果是日程规划，设置相应的类型和数据，并保留文本内容
       if (response.type === "schedule") {
         chatMessages.value[aiMessageIndex].type = "schedule";
         chatMessages.value[aiMessageIndex].schedules = response.schedules;
+        // 不覆盖 content，保留已渲染/遮挡后的文本
       }
     } else {
       // 添加错误消息

@@ -166,11 +166,23 @@ class AIService {
     // 解析日程响应
     parseScheduleResponse(response) {
         try {
-            // 尝试从响应中提取JSON
-            const jsonMatch = response.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                const jsonStr = jsonMatch[0];
-                const parsed = JSON.parse(jsonStr);
+            // 优先从 <Schedule> 标签中提取 JSON
+            let jsonCandidate = null;
+            const scheduleTagged = response.match(/<Schedule>[\s\S]*?<\/Schedule>/i);
+            if (scheduleTagged) {
+                jsonCandidate = scheduleTagged[0].replace(/<\/?Schedule>/gi, '').trim();
+            }
+
+            // 兜底：从全文中提取第一个大括号 JSON
+            if (!jsonCandidate) {
+                const jsonMatch = response.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    jsonCandidate = jsonMatch[0];
+                }
+            }
+
+            if (jsonCandidate) {
+                const parsed = JSON.parse(jsonCandidate);
 
                 if (parsed.type === 'schedule' && Array.isArray(parsed.schedules)) {
                     // 处理复杂日程格式（多天）

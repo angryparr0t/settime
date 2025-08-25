@@ -18,8 +18,14 @@
         >
       </template>
       <template v-else>
-        <!-- 如果是日程规划消息，显示日程卡片 -->
+        <!-- 如果是日程规划消息，显示日程卡片和文本 -->
         <div v-if="msg.type === 'schedule'" class="schedule-message">
+          <div class="msg-content">
+            <div
+              class="markdown-content"
+              v-html="renderMarkdown(msg.content)"
+            ></div>
+          </div>
           <ScheduleCard
             :schedules="msg.schedules"
             @accept="handleScheduleAccept"

@@ -29,9 +29,13 @@ export const AI_CONFIG = {
 - [链接文本](URL) 用于外部链接
 - | 表格 | 用于数据展示 |
 
-当用户请求日程规划时，请按照以下JSON格式返回日程数据：
+当用户请求日程规划时：
+1) 请将日程的 JSON 结构严格包裹在 <Schedule> 与 </Schedule> 标签中返回；
+2) 标签外请保留一段面向用户的自然语言说明（Markdown 可用），不要在聊天文本中直接展示 JSON；
+3) JSON 结构参考如下：
 
 简单日程格式（单天）：
+<Schedule>
 {
   "type": "schedule",
   "schedules": [
@@ -42,8 +46,10 @@ export const AI_CONFIG = {
     }
   ]
 }
+</Schedule>
 
 复杂日程格式（多天）：
+<Schedule>
 {
   "type": "schedule",
   "schedules": [
@@ -55,15 +61,18 @@ export const AI_CONFIG = {
     }
   ]
 }
+</Schedule>
 
 如果用户没有明确请求日程规划，请正常回复文本内容，可以使用Markdown格式来增强可读性。`
 };
 
 // 检查API密钥是否已配置
 export function isApiKeyConfigured() {
-  return AI_CONFIG.DEEPSEEK_API_KEY &&
+  return (
+    AI_CONFIG.DEEPSEEK_API_KEY &&
     AI_CONFIG.DEEPSEEK_API_KEY !== 'your-deepseek-api-key-here' &&
-    AI_CONFIG.DEEPSEEK_API_KEY.startsWith('sk-');
+    AI_CONFIG.DEEPSEEK_API_KEY.startsWith('sk-')
+  );
 }
 
 // 获取配置信息
@@ -72,7 +81,7 @@ export function getConfigInfo() {
     isConfigured: isApiKeyConfigured(),
     modelName: AI_CONFIG.MODEL_NAME,
     maxTokens: AI_CONFIG.MAX_TOKENS,
-    temperature: AI_CONFIG.TEMPERATURE
+    temperature: AI_CONFIG.TEMPERATURE,
   };
 }
 
@@ -83,19 +92,19 @@ export function getApiKeyStatus() {
   if (!key || key === 'your-deepseek-api-key-here') {
     return {
       status: 'not-configured',
-      message: 'API密钥未配置，请在src/config/ai-config.js中设置正确的API密钥'
+      message: 'API密钥未配置，请在src/config/ai-config.js中设置正确的API密钥',
     };
   }
 
   if (!key.startsWith('sk-')) {
     return {
       status: 'invalid-format',
-      message: 'API密钥格式不正确，应该以sk-开头'
+      message: 'API密钥格式不正确，应该以sk-开头',
     };
   }
 
   return {
     status: 'configured',
-    message: 'API密钥已配置'
+    message: 'API密钥已配置',
   };
 }
